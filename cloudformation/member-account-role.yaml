@@ -1,0 +1,334 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  IAM role for AWS Lambda Tagging Automation - Member Account
+  This template creates the cross-account IAM role that allows the delegated
+  management account Lambda function to tag resources in this member account.
+  Deploy this stack in EACH member account that needs tagging.
+
+Parameters:
+  ManagementAccountId:
+    Type: String
+    Description: AWS Account ID of the delegated management account
+    Default: '673343607675'
+    AllowedPattern: '^\d{12}$'
+    ConstraintDescription: Must be a valid 12-digit AWS account ID
+
+  ManagementRoleName:
+    Type: String
+    Description: Name of the execution role in the management account
+    Default: DelegatedTaggingExecutionRole
+
+  MemberRoleName:
+    Type: String
+    Description: Name for the tagging role in this member account
+    Default: MemberTaggingRole
+
+Resources:
+  # ============================================================================
+  # Member Account Tagging Role
+  # ============================================================================
+  MemberTaggingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref MemberRoleName
+      Description: Allows management account Lambda to tag resources in this member account
+      MaxSessionDuration: 3600  # 1 hour
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowManagementAccountAssumption
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub 'arn:aws:iam::${ManagementAccountId}:role/${ManagementRoleName}'
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: tagging-automation
+      Policies:
+        - PolicyName: MemberTaggingPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # ================================================================
+              # Resource Groups Tagging API (Cross-Service)
+              # ================================================================
+              - Sid: ResourceGroupsTaggingAPIAccess
+                Effect: Allow
+                Action:
+                  - resourcegroupstaggingapi:GetResources
+                  - resourcegroupstaggingapi:GetTagKeys
+                  - resourcegroupstaggingapi:GetTagValues
+                  - resourcegroupstaggingapi:TagResources
+                  - resourcegroupstaggingapi:UntagResources
+                Resource: '*'
+
+              # ================================================================
+              # EC2 Tagging (Instances, Volumes, VPCs, NAT Gateways, etc.)
+              # ================================================================
+              - Sid: EC2TaggingAccess
+                Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                  - ec2:DescribeTags
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeNatGateways
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeImages
+                Resource: '*'
+
+              # ================================================================
+              # S3 Tagging
+              # ================================================================
+              - Sid: S3TaggingAccess
+                Effect: Allow
+                Action:
+                  - s3:GetBucketTagging
+                  - s3:PutBucketTagging
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                  - s3:GetBucketAcl
+                  - s3:ListAllMyBuckets
+                Resource: '*'
+
+              # ================================================================
+              # RDS Tagging
+              # ================================================================
+              - Sid: RDSTaggingAccess
+                Effect: Allow
+                Action:
+                  - rds:AddTagsToResource
+                  - rds:RemoveTagsFromResource
+                  - rds:ListTagsForResource
+                  - rds:DescribeDBInstances
+                  - rds:DescribeDBClusters
+                  - rds:DescribeDBSnapshots
+                Resource: '*'
+
+              # ================================================================
+              # EKS Tagging
+              # ================================================================
+              - Sid: EKSTaggingAccess
+                Effect: Allow
+                Action:
+                  - eks:TagResource
+                  - eks:UntagResource
+                  - eks:ListTagsForResource
+                  - eks:DescribeCluster
+                  - eks:ListClusters
+                Resource: '*'
+
+              # ================================================================
+              # ElastiCache Tagging
+              # ================================================================
+              - Sid: ElastiCacheTaggingAccess
+                Effect: Allow
+                Action:
+                  - elasticache:AddTagsToResource
+                  - elasticache:RemoveTagsFromResource
+                  - elasticache:ListTagsForResource
+                  - elasticache:DescribeCacheClusters
+                  - elasticache:DescribeReplicationGroups
+                Resource: '*'
+
+              # ================================================================
+              # OpenSearch Tagging
+              # ================================================================
+              - Sid: OpenSearchTaggingAccess
+                Effect: Allow
+                Action:
+                  - es:AddTags
+                  - es:RemoveTags
+                  - es:ListTags
+                  - es:DescribeDomain
+                  - es:ListDomainNames
+                Resource: '*'
+
+              # ================================================================
+              # MSK (Managed Streaming for Kafka) Tagging
+              # ================================================================
+              - Sid: MSKTaggingAccess
+                Effect: Allow
+                Action:
+                  - kafka:TagResource
+                  - kafka:UntagResource
+                  - kafka:ListTagsForResource
+                  - kafka:DescribeCluster
+                  - kafka:ListClusters
+                Resource: '*'
+
+              # ================================================================
+              # CloudFront Tagging
+              # ================================================================
+              - Sid: CloudFrontTaggingAccess
+                Effect: Allow
+                Action:
+                  - cloudfront:TagResource
+                  - cloudfront:UntagResource
+                  - cloudfront:ListTagsForResource
+                  - cloudfront:GetDistribution
+                  - cloudfront:ListDistributions
+                Resource: '*'
+
+              # ================================================================
+              # ELB/ALB/NLB Tagging
+              # ================================================================
+              - Sid: LoadBalancerTaggingAccess
+                Effect: Allow
+                Action:
+                  - elasticloadbalancing:AddTags
+                  - elasticloadbalancing:RemoveTags
+                  - elasticloadbalancing:DescribeTags
+                  - elasticloadbalancing:DescribeLoadBalancers
+                  - elasticloadbalancing:DescribeTargetGroups
+                Resource: '*'
+
+              # ================================================================
+              # SageMaker Tagging
+              # ================================================================
+              - Sid: SageMakerTaggingAccess
+                Effect: Allow
+                Action:
+                  - sagemaker:AddTags
+                  - sagemaker:DeleteTags
+                  - sagemaker:ListTags
+                  - sagemaker:DescribeNotebookInstance
+                  - sagemaker:DescribeEndpoint
+                  - sagemaker:DescribeModel
+                Resource: '*'
+
+              # ================================================================
+              # DocumentDB Tagging
+              # ================================================================
+              - Sid: DocDBTaggingAccess
+                Effect: Allow
+                Action:
+                  - rds:AddTagsToResource
+                  - rds:RemoveTagsFromResource
+                  - rds:ListTagsForResource
+                  - rds:DescribeDBClusters
+                Resource: '*'
+
+              # ================================================================
+              # Redshift Tagging
+              # ================================================================
+              - Sid: RedshiftTaggingAccess
+                Effect: Allow
+                Action:
+                  - redshift:CreateTags
+                  - redshift:DeleteTags
+                  - redshift:DescribeTags
+                  - redshift:DescribeClusters
+                Resource: '*'
+
+              # ================================================================
+              # Glue Tagging
+              # ================================================================
+              - Sid: GlueTaggingAccess
+                Effect: Allow
+                Action:
+                  - glue:TagResource
+                  - glue:UntagResource
+                  - glue:GetTags
+                  - glue:GetDatabase
+                  - glue:GetTable
+                  - glue:GetJob
+                  - glue:GetCrawler
+                Resource: '*'
+
+              # ================================================================
+              # GuardDuty Tagging
+              # ================================================================
+              - Sid: GuardDutyTaggingAccess
+                Effect: Allow
+                Action:
+                  - guardduty:TagResource
+                  - guardduty:UntagResource
+                  - guardduty:ListTagsForResource
+                  - guardduty:GetDetector
+                  - guardduty:ListDetectors
+                Resource: '*'
+
+              # ================================================================
+              # Security Hub Tagging
+              # ================================================================
+              - Sid: SecurityHubTaggingAccess
+                Effect: Allow
+                Action:
+                  - securityhub:TagResource
+                  - securityhub:UntagResource
+                  - securityhub:ListTagsForResource
+                  - securityhub:DescribeHub
+                Resource: '*'
+
+              # ================================================================
+              # VPC Firewall (Network Firewall) Tagging
+              # ================================================================
+              - Sid: NetworkFirewallTaggingAccess
+                Effect: Allow
+                Action:
+                  - network-firewall:TagResource
+                  - network-firewall:UntagResource
+                  - network-firewall:ListTagsForResource
+                  - network-firewall:DescribeFirewall
+                  - network-firewall:DescribeFirewallPolicy
+                Resource: '*'
+
+              # ================================================================
+              # Lambda Tagging (if needed)
+              # ================================================================
+              - Sid: LambdaTaggingAccess
+                Effect: Allow
+                Action:
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:ListTags
+                  - lambda:GetFunction
+                Resource: '*'
+
+      Tags:
+        - Key: Purpose
+          Value: Cross-Account Tagging
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: ManagementAccount
+          Value: !Ref ManagementAccountId
+
+# ============================================================================
+# Outputs
+# ============================================================================
+Outputs:
+  MemberTaggingRoleArn:
+    Description: ARN of the member account tagging role
+    Value: !GetAtt MemberTaggingRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-MemberTaggingRoleArn'
+
+  MemberTaggingRoleName:
+    Description: Name of the member account tagging role
+    Value: !Ref MemberRoleName
+    Export:
+      Name: !Sub '${AWS::StackName}-MemberTaggingRoleName'
+
+  MemberAccountId:
+    Description: This member account ID
+    Value: !Ref AWS::AccountId
+    Export:
+      Name: !Sub '${AWS::StackName}-MemberAccountId'
+
+  ManagementAccountIdOutput:
+    Description: Management account ID that can assume this role
+    Value: !Ref ManagementAccountId
+    Export:
+      Name: !Sub '${AWS::StackName}-ManagementAccountId'
+
+  TrustPolicyPrincipal:
+    Description: Principal ARN that can assume this role
+    Value: !Sub 'arn:aws:iam::${ManagementAccountId}:role/${ManagementRoleName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-TrustPolicyPrincipal'

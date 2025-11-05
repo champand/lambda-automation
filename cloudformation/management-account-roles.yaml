@@ -1,0 +1,271 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  IAM roles and policies for AWS Lambda Tagging Automation - Management Account
+  This template creates the Lambda execution role and supporting resources in the
+  delegated management account (673343607675).
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: S3 bucket name for input files and reports
+    Default: tagging-automation-bucket
+
+  SNSTopicName:
+    Type: String
+    Description: SNS topic name for notifications
+    Default: tagging-automation-notifications
+
+  MemberRoleName:
+    Type: String
+    Description: Name of the role in member accounts that Lambda will assume
+    Default: MemberTaggingRole
+
+  LambdaFunctionName:
+    Type: String
+    Description: Name of the Lambda function
+    Default: ResourceTaggingAutomation
+
+Resources:
+  # ============================================================================
+  # S3 Bucket for Input/Output Files
+  # ============================================================================
+  TaggingBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldReports
+            Status: Enabled
+            ExpirationInDays: 90
+            Prefix: reports/
+      Tags:
+        - Key: Purpose
+          Value: Lambda Tagging Automation
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ============================================================================
+  # SNS Topic for Notifications
+  # ============================================================================
+  TaggingNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Ref SNSTopicName
+      DisplayName: AWS Resource Tagging Automation Notifications
+      Tags:
+        - Key: Purpose
+          Value: Lambda Tagging Automation
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  TaggingNotificationTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref TaggingNotificationTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - sns:Publish
+            Resource: !Ref TaggingNotificationTopic
+
+  # ============================================================================
+  # Lambda Execution Role (Management Account)
+  # ============================================================================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: DelegatedTaggingExecutionRole
+      Description: Execution role for Lambda tagging automation in management account
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: TaggingLambdaExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # S3 Permissions
+              - Sid: S3ReadWriteAccess
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !Sub 'arn:aws:s3:::${S3BucketName}'
+                  - !Sub 'arn:aws:s3:::${S3BucketName}/*'
+
+              # SNS Permissions
+              - Sid: SNSPublishAccess
+                Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref TaggingNotificationTopic
+
+              # STS Assume Role Permissions (for cross-account access)
+              - Sid: STSAssumeRoleAccess
+                Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource: !Sub 'arn:aws:iam::*:role/${MemberRoleName}'
+
+              # CloudWatch Logs (extended permissions)
+              - Sid: CloudWatchLogsAccess
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${LambdaFunctionName}:*'
+
+              # CloudWatch Metrics (optional - for custom metrics)
+              - Sid: CloudWatchMetricsAccess
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: Lambda/TaggingAutomation
+
+              # KMS (if S3 bucket uses KMS encryption)
+              - Sid: KMSDecryptAccess
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub 's3.${AWS::Region}.amazonaws.com'
+
+              # Resource Groups Tagging API (management account)
+              - Sid: ResourceGroupsTaggingAPIAccess
+                Effect: Allow
+                Action:
+                  - resourcegroupstaggingapi:GetResources
+                  - resourcegroupstaggingapi:GetTagKeys
+                  - resourcegroupstaggingapi:GetTagValues
+                Resource: '*'
+
+      Tags:
+        - Key: Purpose
+          Value: Lambda Tagging Automation
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ============================================================================
+  # CloudWatch Log Group
+  # ============================================================================
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${LambdaFunctionName}'
+      RetentionInDays: 30
+
+  # ============================================================================
+  # Lambda Function
+  # ============================================================================
+  TaggingLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref LambdaFunctionName
+      Description: Automated AWS resource tagging from Excel input
+      Runtime: python3.12
+      Handler: lambda_function.tag_resources_lambda.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 900  # 15 minutes
+      MemorySize: 512
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          S3_BUCKET: !Ref S3BucketName
+          TAGGING_INPUT_FILE: input/tagging_input.xlsx
+          TAGGING_REPORT_FILE_PREFIX: reports/tagging_report_
+          SNS_TOPIC_ARN: !Ref TaggingNotificationTopic
+          LOG_LEVEL: INFO
+          AWS_ACCOUNT_IDS: ''  # Set this to comma-separated account IDs
+          PRESIGNED_URL_EXPIRY: '14400'
+          MEMBER_ROLE_NAME: !Ref MemberRoleName
+          EXECUTION_ROLE_ARN: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          # Placeholder code - replace with actual deployment package
+          def lambda_handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': 'Lambda function needs to be updated with actual code package'
+              }
+      Tags:
+        - Key: Purpose
+          Value: Lambda Tagging Automation
+        - Key: ManagedBy
+          Value: CloudFormation
+
+# ============================================================================
+# Outputs
+# ============================================================================
+Outputs:
+  LambdaExecutionRoleArn:
+    Description: ARN of the Lambda execution role
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ExecutionRoleArn'
+
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt TaggingLambdaFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaFunctionArn'
+
+  S3BucketName:
+    Description: Name of the S3 bucket
+    Value: !Ref TaggingBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-S3BucketName'
+
+  SNSTopicArn:
+    Description: ARN of the SNS notification topic
+    Value: !Ref TaggingNotificationTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-SNSTopicArn'
+
+  MemberRoleNameOutput:
+    Description: Name of the role to create in member accounts
+    Value: !Ref MemberRoleName
+    Export:
+      Name: !Sub '${AWS::StackName}-MemberRoleName'
+
+  ManagementAccountId:
+    Description: Management account ID (for member account trust policies)
+    Value: !Ref AWS::AccountId
+    Export:
+      Name: !Sub '${AWS::StackName}-ManagementAccountId'
